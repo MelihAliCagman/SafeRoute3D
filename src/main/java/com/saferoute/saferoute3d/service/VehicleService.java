@@ -10,8 +10,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -27,7 +27,7 @@ public class VehicleService {
 
     @PostConstruct
     public void init() {
-        // Başlangıçta veritabanını temizle (Temiz sayfa)
+        // 1. Sistem temizliği (0 araçla başla)
         vehicleRepository.deleteAll();
 
         mapGraph = new CustomGraph();
@@ -35,40 +35,46 @@ public class VehicleService {
         vehicleActiveRoutes = new CustomHashMap<>();
         vehicleReturnRoutes = new CustomHashMap<>();
 
-        // 1. GENİŞ HARİTA: 40x40'lık bir ızgara oluştur
+        // 2. Geniş Harita Oluştur (40x40)
         for (int x = -20; x <= 20; x++) {
             for (int z = -20; z <= 20; z++) {
                 mapGraph.addNode(new Node(x, z));
             }
         }
 
-        // 2. ŞEHİR YAPISI: Her 5 birimde bir 3x3'lük bina blokları koy, aralar "Cadde" olsun
-        for (int x = -15; x <= 15; x += 5) {
-            for (int z = -15; z <= 15; z += 5) {
-                createBuildingBlock(x, z);
+        // 3. Deprem Senaryosu: Düzensiz Yıkıntılar
+        int[] clustersX = {-12, -8, -5, 2, 6, 10, 14, -15, 0, 8, -3};
+        int[] clustersZ = {-10, 5, -14, 8, -6, 12, 0, 15, -2, -15, 10};
+
+        for (int i = 0; i < clustersX.length; i++) {
+            int cx = clustersX[i];
+            int cz = clustersZ[i];
+            for(int dx = -2; dx <= 2; dx++) {
+                for(int dz = -2; dz <= 2; dz++) {
+                    if(Math.random() > 0.3) { // Rastgele yıkıntı yerleşimi
+                        Node n = mapGraph.getNodeById((cx+dx) + "," + (cz+dz));
+                        if (n != null) n.setObstacle(true);
+                    }
+                }
             }
         }
 
-        // 3. YOLLARI BAĞLA: Sadece bina olmayan düğümleri birbirine bağla
+        // Tahliye Noktasını (Hastane Girişi) açık tut
+        Node evac = mapGraph.getNodeById("0,-18");
+        if(evac != null) evac.setObstacle(false);
+
+        // Yolları birbirine bağla
         for (Node node : mapGraph.getNodes()) {
             connectNeighbors(node);
         }
 
-        System.out.println("Geniş Şehir Haritası Hazır. Araç Bekleniyor...");
-    }
-
-    private void createBuildingBlock(int startX, int startZ) {
-        for (int x = startX; x < startX + 3; x++) {
-            for (int z = startZ; z < startZ + 3; z++) {
-                Node n = mapGraph.getNodeById(x + "," + z);
-                if (n != null) n.setObstacle(true);
-            }
-        }
+        System.out.println("SafeRoute3D: 40x40 Düzensiz Şehir Haritası Hazır!");
     }
 
     private void connectNeighbors(Node node) {
         if (node.isObstacle()) return;
-        int x = node.getX(); int z = node.getY();
+        int x = node.getX();
+        int z = node.getY();
         int[][] neighbors = {{x+1, z}, {x-1, z}, {x, z+1}, {x, z-1}};
         for (int[] n : neighbors) {
             Node neighbor = mapGraph.getNodeById(n[0] + "," + n[1]);
@@ -78,7 +84,23 @@ public class VehicleService {
         }
     }
 
-    // --- DIŞARIYA AÇILAN METODLAR (Controller Hatalarını Çözen Kısım) ---
+    // --- TEMEL ARAÇ İŞLEMLERİ ---
+
+    public Vehicle addVehicle(String name, double x, double z) {
+        Vehicle v = new Vehicle();
+        v.setName(name);
+        // Tüm yeni araçlar Tahliye Noktasından (Yeşil Bölge) başlar
+        v.setPosX(0.0);
+        v.setPosZ(-18.0);
+        v.setPosY(0.0);
+        v.setBatteryLevel(100.0);
+        v.setStatus(Vehicle.VehicleStatus.IDLE);
+
+        Vehicle saved = vehicleRepository.save(v);
+        activeVehiclesMap.put(saved.getId(), saved);
+        vehicleReturnRoutes.put(saved.getId(), new CustomStack<>());
+        return saved;
+    }
 
     public List<Vehicle> getAllVehicles() {
         return vehicleRepository.findAll();
@@ -88,64 +110,78 @@ public class VehicleService {
         return activeVehiclesMap.get(id);
     }
 
-    public Vehicle addVehicle(String name, double x, double z) {
-        Vehicle v = new Vehicle();
-        v.setName(name); v.setPosX(x); v.setPosZ(z);
-        v.setStatus(Vehicle.VehicleStatus.IDLE);
-        v.setBatteryLevel(100.0);
+    // --- OTONOM ROTA VE KARAR DESTEK ---
 
-        Vehicle saved = vehicleRepository.save(v);
-        activeVehiclesMap.put(saved.getId(), saved);
-        vehicleReturnRoutes.put(saved.getId(), new CustomStack<>());
-        return saved;
-    }
+    public Long findClosestVehicleId(int targetX, int targetZ) {
+        List<Vehicle> all = vehicleRepository.findAll();
+        Long closestId = null;
+        double minDistance = Double.MAX_VALUE;
 
-    public String setVehicleTarget(Long vehicleId, int targetX, int targetZ) {
-        Vehicle v = vehicleRepository.findById(vehicleId).orElse(null);
-        if (v == null) return "Hata: Araç bulunamadı.";
-
-        Node source = mapGraph.getNodeById((int)Math.round(v.getPosX()) + "," + (int)Math.round(v.getPosZ()));
-        Node target = mapGraph.getNodeById(targetX + "," + targetZ);
-
-        if (source == null || target == null || target.isObstacle()) return "Hata: Geçersiz hedef.";
-
-        List<Node> path = com.saferoute.saferoute3d.algorithm.DijkstraAlgorithm.calculateShortestPath(source, target, mapGraph.getNodes());
-        if (path.isEmpty()) return "Hata: Yol kapalı.";
-
-        CustomQueue<Node> pathQueue = new CustomQueue<>();
-        for (Node n : path) pathQueue.enqueue(n);
-        vehicleActiveRoutes.put(vehicleId, pathQueue);
-
-        v.setStatus(Vehicle.VehicleStatus.MOVING);
-        vehicleRepository.save(v);
-        return "İKA-" + vehicleId + " yola çıktı.";
-    }
-
-    @Scheduled(fixedRate = 800) // Biraz daha hızlı akış
-    public void simulationLoop() {
-        List<Vehicle> vehicles = vehicleRepository.findAll();
-        for (Vehicle v : vehicles) {
-            CustomQueue<Node> route = vehicleActiveRoutes.get(v.getId());
-            if (v.getStatus() == Vehicle.VehicleStatus.MOVING && route != null && !route.isEmpty()) {
-                Node next = route.dequeue();
-                v.setPosX(next.getX()); v.setPosZ(next.getY());
-                vehicleRepository.save(v);
-                if (route.isEmpty()) {
-                    v.setStatus(Vehicle.VehicleStatus.IDLE);
-                    vehicleRepository.save(v);
+        for (Vehicle v : all) {
+            if (v.getStatus() == Vehicle.VehicleStatus.IDLE) {
+                double dist = Math.sqrt(Math.pow(v.getPosX() - targetX, 2) + Math.pow(v.getPosZ() - targetZ, 2));
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestId = v.getId();
                 }
             }
         }
-        messagingTemplate.convertAndSend("/topic/vehicles", vehicles);
+        return closestId;
     }
 
-    public Long findClosestVehicleId(int tx, int tz) {
-        List<Vehicle> all = vehicleRepository.findAll();
-        Long closest = null; double minD = Double.MAX_VALUE;
-        for (Vehicle v : all) {
-            double d = Math.sqrt(Math.pow(v.getPosX()-tx,2) + Math.pow(v.getPosZ()-tz,2));
-            if (d < minD) { minD = d; closest = v.getId(); }
+    public String setVehicleTarget(Long vehicleId, int targetX, int targetZ) {
+        Vehicle vehicle = vehicleRepository.findById(vehicleId).orElse(null);
+        if (vehicle == null) return "Hata: Araç ID bulunamadı.";
+
+        Node source = mapGraph.getNodeById((int)Math.round(vehicle.getPosX()) + "," + (int)Math.round(vehicle.getPosZ()));
+        Node target = mapGraph.getNodeById(targetX + "," + targetZ);
+
+        if (source == null || target == null) return "Hata: Geçersiz koordinatlar.";
+        if (target.isObstacle()) return "Hata: Hedef yıkıntı içinde!";
+
+        // Dijkstra Algoritması Çalıştırılıyor
+        List<Node> path = com.saferoute.saferoute3d.algorithm.DijkstraAlgorithm.calculateShortestPath(source, target, mapGraph.getNodes());
+
+        if (path.isEmpty()) return "Hata: Yol kapalı veya ulaşılamaz.";
+
+        CustomQueue<Node> pathQueue = new CustomQueue<>();
+        for (Node n : path) {
+            pathQueue.enqueue(n);
         }
-        return closest;
+        vehicleActiveRoutes.put(vehicleId, pathQueue);
+
+        vehicle.setStatus(Vehicle.VehicleStatus.MOVING);
+        vehicleRepository.save(vehicle);
+
+        return "İKA-" + vehicleId + " için rota oluşturuldu. Adım sayısı: " + pathQueue.getSize();
+    }
+
+    // --- SİMUULASYON DÖNGÜSÜ ---
+
+    @Scheduled(fixedRate = 800) // Gerçek zamanlı akış hızı
+    public void simulationLoop() {
+        List<Vehicle> vehicles = vehicleRepository.findAll();
+
+        for (Vehicle v : vehicles) {
+            CustomQueue<Node> route = vehicleActiveRoutes.get(v.getId());
+
+            if (v.getStatus() == Vehicle.VehicleStatus.MOVING && route != null && !route.isEmpty()) {
+                Node nextStep = route.dequeue();
+
+                v.setPosX(nextStep.getX());
+                v.setPosZ(nextStep.getY()); // Node sınıfındaki Y koordinatı haritada Z'dir
+
+                vehicleRepository.save(v);
+
+                // Eğer rota bittiyse aracı durdur (Frontend bu 'IDLE' bilgisini alıp yeni göreve geçer)
+                if (route.isEmpty()) {
+                    v.setStatus(Vehicle.VehicleStatus.IDLE);
+                    vehicleRepository.save(v);
+                    //vehicleActiveRoutes.remove(v.getId());
+                }
+            }
+        }
+        // WebSocket üzerinden tüm araçları Frontend'e fırlat
+        messagingTemplate.convertAndSend("/topic/vehicles", vehicles);
     }
 }
