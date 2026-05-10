@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>SafeRoute 3D: Afet Bölgesi Koordinasyon Sistemi</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #05070a; font-family: 'Segoe UI', Tahoma, sans-serif; color: white;}
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1;}
+
+        /* Sol Kontrol Paneli */
+        #ui-panel { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(10, 14, 23, 0.9); padding: 25px; border-radius: 12px; width: 330px; border: 1px solid #1e293b; box-shadow: 0 10px 40px rgba(0,0,0,0.6); backdrop-filter: blur(5px); display: flex; flex-direction: column; gap: 10px;}
+        h2 { margin-top: 0; font-size: 19px; border-bottom: 2px solid #1e293b; padding-bottom: 12px; color: #4da6ff; letter-spacing: 1.2px; text-transform: uppercase;}
+        button { width: 100%; padding: 13px; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; cursor: pointer; border-radius: 6px; font-weight: bold; transition: all 0.2s; text-align: left;}
+        button:hover { background: #4da6ff; color: #0f172a; border-color: #4da6ff; transform: translateY(-2px);}
+        .danger { border-color: #ef4444; color: #ef4444; background: transparent; }
+        .danger:hover { background: #ef4444; color: white; }
+        #metrics { font-size: 14px; color: #94a3b8; background: #0f172a; padding: 12px; border-radius: 6px; border: 1px solid #1e293b;}
+
+        /* Modern Bildirim Kutuları (Toast) */
+        #toast-container { position: absolute; bottom: 30px; right: 30px; z-index: 100; display: flex; flex-direction: column; gap: 12px; pointer-events: none;}
+        .toast { min-width: 280px; padding: 18px 22px; background: rgba(15, 23, 42, 0.98); color: white; border-left: 6px solid #4da6ff; border-radius: 8px; box-shadow: 0 6px 166px rgba(0,0,0,0.5); animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; font-size: 15px;}
+        .toast.success { border-left-color: #10b981; }
+        .toast.warning { border-left-color: #f59e0b; }
+        .toast.error { border-left-color: #ef4444; }
+        @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+<div id="ui-panel">
+    <h2>SafeRoute3D Kontrol</h2>
+    <button onclick="addVehicle()">+ Yeni Otonom Araç Ekle</button>
+    <button class="danger" onclick="triggerEmergency()">! Acil Yaralı Tespit Et (HEAP)</button>
+    <button class="danger" onclick="disconnectVehicle()">Sinyal Kes (STACK Eve Dönüş)</button>
+    <button onclick="runPerformanceTest()" style="background:#0f172a; color:#10b981; border-color:#10b981; margin-top:20px; font-size:15px; display:flex; align-items:center; gap:8px;">
+        📊 Performans Kıyasla
+    </button>
+
+    <h2 style="margin-top: 30px;">Algoritma Metrikleri</h2>
+    <div id="metrics">Bağlanıyor...</div>
+</div>
+
+<div id="toast-container"></div>
+<div id="canvas-container"></div>
+<script src="app.js"></script>
+</body>
+</html>
