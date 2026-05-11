@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +25,8 @@ public class VehicleService {
     private CustomHashMap<Long, Vehicle> activeVehiclesMap;
     private CustomHashMap<Long, CustomQueue<Node>> vehicleActiveRoutes;
     private CustomHashMap<Long, CustomStack<Node>> vehicleReturnRoutes;
+    private static final int EVAC_X = 0;
+    private static final int EVAC_Z = -18;
 
     @PostConstruct
     public void init() {
@@ -60,8 +63,23 @@ public class VehicleService {
         }
 
         // Tahliye Noktasını (Hastane Girişi) açık tut
-        Node evac = mapGraph.getNodeById("0,-18");
-        if(evac != null) evac.setObstacle(false);
+        for (Node node : mapGraph.getNodes()) {
+            node.setObstacle(!isRoadCell(node.getX(), node.getY()));
+        }
+
+        int[][] safePoints = {
+                {EVAC_X, EVAC_Z},
+                {8, 8},
+                {-12, 7},
+                {0, -12},
+                {14, -14},
+                {-16, -16}
+        };
+
+        for (int[] point : safePoints) {
+            Node safeNode = mapGraph.getNodeById(point[0] + "," + point[1]);
+            if (safeNode != null) safeNode.setObstacle(false);
+        }
 
         // Yolları birbirine bağla
         for (Node node : mapGraph.getNodes()) {
@@ -86,6 +104,51 @@ public class VehicleService {
 
     // --- TEMEL ARAÇ İŞLEMLERİ ---
 
+    private boolean isRoadCell(int x, int z) {
+        if ((x == EVAC_X && z == EVAC_Z)
+                || (x == 8 && z == 8)
+                || (x == -12 && z == 7)
+                || (x == 0 && z == -12)
+                || (x == 14 && z == -14)
+                || (x == -16 && z == -16)) {
+            return true;
+        }
+
+        boolean avenue = x == -18 || x == -14 || x == -11 || x == -7 || x == -2 || x == 3 || x == 7 || x == 12 || x == 17;
+        boolean street = z == -18 || z == -14 || z == -9 || z == -5 || z == -1 || z == 4 || z == 8 || z == 13 || z == 17;
+
+        boolean connector =
+                (z == -10 && x >= -15 && x <= -3)
+                        || (z == 4 && x >= -3 && x <= 14)
+                        || (z == 15 && x >= -16 && x <= -6)
+                        || (z == -14 && x >= 7 && x <= 17)
+                        || (z == 12 && x >= -18 && x <= -11)
+                        || (x == 0 && z >= -18 && z <= -12)
+                        || (x == -16 && z >= -16 && z <= 7)
+                        || (x == 8 && z >= 4 && z <= 8)
+                        || (x == 14 && z >= -14 && z <= 4)
+                        || (z == -12 && x >= -14 && x <= -7)
+                        || (z == 2 && x >= -11 && x <= 3)
+                        || (z == 10 && x >= 7 && x <= 17)
+                        || (x == -5 && z >= -9 && z <= 4)
+                        || (x == 10 && z >= -14 && z <= 13);
+
+        return avenue || street || connector;
+    }
+
+    private boolean hasNearbyObstacle(int x, int z) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                Node neighbor = mapGraph.getNodeById((x + dx) + "," + (z + dz));
+                if (neighbor != null && neighbor.isObstacle()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public Vehicle addVehicle(String name, double x, double z) {
         Vehicle v = new Vehicle();
         v.setName(name);
@@ -108,6 +171,31 @@ public class VehicleService {
 
     public Vehicle getVehicleFast(Long id) {
         return activeVehiclesMap.get(id);
+    }
+
+    public List<Map<String, Integer>> getObstacleCells() {
+        List<Map<String, Integer>> obstacles = new ArrayList<>();
+        for (Node node : mapGraph.getNodes()) {
+            if (node.isObstacle() && shouldRenderBuilding(node.getX(), node.getY())) {
+                obstacles.add(Map.of("x", node.getX(), "z", node.getY()));
+            }
+        }
+        return obstacles;
+    }
+
+    private boolean shouldRenderBuilding(int x, int z) {
+        int value = Math.abs((x * 37) + (z * 19) + (x * z * 3));
+        return value % 5 == 0 || value % 11 == 0;
+    }
+
+    public List<Map<String, Integer>> getRoadCells() {
+        List<Map<String, Integer>> roads = new ArrayList<>();
+        for (Node node : mapGraph.getNodes()) {
+            if (isRoadCell(node.getX(), node.getY())) {
+                roads.add(Map.of("x", node.getX(), "z", node.getY()));
+            }
+        }
+        return roads;
     }
 
     // --- OTONOM ROTA VE KARAR DESTEK ---
@@ -138,6 +226,12 @@ public class VehicleService {
 
         if (source == null || target == null) return "Hata: Geçersiz koordinatlar.";
         if (target.isObstacle()) return "Hata: Hedef yıkıntı içinde!";
+        if (source.getId().equals(target.getId())) {
+            vehicleActiveRoutes.put(vehicleId, new CustomQueue<>());
+            vehicle.setStatus(Vehicle.VehicleStatus.IDLE);
+            vehicleRepository.save(vehicle);
+            return "İKA-" + vehicleId + " zaten hedef noktada.";
+        }
 
         // Dijkstra Algoritması Çalıştırılıyor
         List<Node> path = com.saferoute.saferoute3d.algorithm.DijkstraAlgorithm.calculateShortestPath(source, target, mapGraph.getNodes());
@@ -154,6 +248,16 @@ public class VehicleService {
         vehicleRepository.save(vehicle);
 
         return "İKA-" + vehicleId + " için rota oluşturuldu. Adım sayısı: " + pathQueue.getSize();
+    }
+
+    public String returnToEvacuationPoint(Long vehicleId) {
+        Vehicle vehicle = vehicleRepository.findById(vehicleId).orElse(null);
+        if (vehicle == null) return "Hata: Arac ID bulunamadi.";
+
+        vehicle.setStatus(Vehicle.VehicleStatus.RETURNING);
+        vehicleRepository.save(vehicle);
+
+        return setVehicleTarget(vehicleId, EVAC_X, EVAC_Z);
     }
 
     // --- SİMUULASYON DÖNGÜSÜ ---

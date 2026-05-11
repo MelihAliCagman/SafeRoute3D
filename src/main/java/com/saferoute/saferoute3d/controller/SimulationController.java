@@ -30,6 +30,16 @@ public class SimulationController {
         return ResponseEntity.ok(vehicleService.getAllVehicles());
     }
 
+    @GetMapping("/map/obstacles")
+    public ResponseEntity<List<java.util.Map<String, Integer>>> getObstacleCells() {
+        return ResponseEntity.ok(vehicleService.getObstacleCells());
+    }
+
+    @GetMapping("/map/roads")
+    public ResponseEntity<List<java.util.Map<String, Integer>>> getRoadCells() {
+        return ResponseEntity.ok(vehicleService.getRoadCells());
+    }
+
     //  1: Heap / Priority Queue Tetikleyicisi
     @PostMapping("/emergency")
     public ResponseEntity<String> triggerEmergency(@RequestParam String taskName, @RequestParam int priorityLevel) {
@@ -55,6 +65,12 @@ public class SimulationController {
     @PostMapping("/set-target/{id}")
     public ResponseEntity<String> setTarget(@PathVariable Long id, @RequestParam int x, @RequestParam int z) {
         String result = vehicleService.setVehicleTarget(id, x, z);
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/return-to-evacuation/{id}")
+    public ResponseEntity<String> returnToEvacuation(@PathVariable Long id) {
+        String result = vehicleService.returnToEvacuationPoint(id);
         return ResponseEntity.ok(result);
     }
 

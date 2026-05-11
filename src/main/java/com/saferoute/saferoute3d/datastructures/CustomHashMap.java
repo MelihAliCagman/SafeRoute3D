@@ -14,14 +14,13 @@ public class CustomHashMap<K, V> {
     }
 
     private Entry<K, V>[] buckets;
-    private int capacity = 16; // Başlangıç boyutu
+    private int capacity = 16;
 
     @SuppressWarnings("unchecked")
     public CustomHashMap() {
         buckets = new Entry[capacity];
     }
 
-    // Basit bir Hash fonksiyonu
     private int getHash(K key) {
         return Math.abs(key.hashCode()) % capacity;
     }
@@ -32,17 +31,20 @@ public class CustomHashMap<K, V> {
 
         if (buckets[index] == null) {
             buckets[index] = newEntry;
-        } else {
-            // Çakışma yönetimi: Mevcut listenin sonuna ekle
-            Entry<K, V> current = buckets[index];
-            while (current.next != null) {
-                if (current.key.equals(key)) {
-                    current.value = value; // Güncelleme
-                    return;
-                }
-                current = current.next;
+            return;
+        }
+
+        Entry<K, V> current = buckets[index];
+        while (current != null) {
+            if (current.key.equals(key)) {
+                current.value = value;
+                return;
             }
-            current.next = newEntry;
+            if (current.next == null) {
+                current.next = newEntry;
+                return;
+            }
+            current = current.next;
         }
     }
 
@@ -55,5 +57,4 @@ public class CustomHashMap<K, V> {
         }
         return null;
     }
-
 }
