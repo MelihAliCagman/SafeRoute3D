@@ -31,3 +31,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Logs and JVM crash dumps ###
+*.log
+hs_err_pid*
+
+### Secrets / local config ###
+.env
+application-local.properties
